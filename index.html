@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#1e293b" />
+    <title>Notes</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        padding: 16px;
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 12px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      button {
+        font-size: 16px;
+        padding: 16px;
+        border: 0;
+        border-radius: 12px;
+        background: #334155;
+        color: #fff;
+      }
+      button.on {
+        background: #f59e0b;
+        color: #111;
+      }
+      #run {
+        display: none;
+        background: #1e293b;
+        border-radius: 12px;
+        padding: 14px;
+        margin: 12px 0;
+      }
+      #timer {
+        font-size: 40px;
+        font-weight: 700;
+        margin: 6px 0;
+      }
+      .stop {
+        background: #dc2626;
+        width: 100%;
+        margin-top: 10px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        margin-top: 8px;
+      }
+      td,
+      th {
+        padding: 6px;
+        border-bottom: 1px solid #334155;
+        text-align: left;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .row button {
+        flex: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Daily Log</h1>
+    <div id="pick" class="grid"></div>
+    <div id="run">
+      <div id="task"></div>
+      <div id="timer">0:00</div>
+      <div id="sub"></div>
+      <div class="grid" style="margin-top: 10px">
+        <button id="wait">Waiting</button>
+        <button id="int">Interrupted (0)</button>
+        <button id="rej">Rejected / redone</button>
+        <button id="cancel">Discard</button>
+      </div>
+      <button class="stop" id="stop">Stop and save</button>
+    </div>
+    <h1 style="margin-top: 20px">Today</h1>
+    <table id="stats"></table>
+    <div class="row">
+      <button id="exp">Export CSV</button><button id="clr">Clear all</button>
+    </div>
+    <script>
+      const TASKS = [
+        "New enrolment",
+        "Replacement",
+        "Update",
+        "Printing",
+        "Form timing",
+      ];
+      const KEY = "tslog";
+      let log = JSON.parse(localStorage.getItem(KEY) || "[]");
+      let cur = JSON.parse(localStorage.getItem(KEY + "_cur") || "null");
+      const $ = (id) => document.getElementById(id);
+      const save = () => {
+        localStorage.setItem(KEY, JSON.stringify(log));
+        localStorage.setItem(KEY + "_cur", JSON.stringify(cur));
+      };
+      const mins = (ms) => (ms / 60000).toFixed(1);
+      const fmt = (ms) => {
+        const s = Math.floor(ms / 1000);
+        return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+      };
+      function waited(c, now) {
+        return c.wait + (c.waitStart ? now - c.waitStart : 0);
+      }
+      TASKS.forEach((t) => {
+        const b = document.createElement("button");
+        b.textContent = t;
+        b.onclick = () => start(t);
+        $("pick").appendChild(b);
+      });
+      function start(t) {
+        cur = {
+          task: t,
+          start: Date.now(),
+          wait: 0,
+          waitStart: null,
+          ints: 0,
+          rej: false,
+        };
+        save();
+        show();
+      }
+      function show() {
+        $("pick").style.display = cur ? "none" : "grid";
+        $("run").style.display = cur ? "block" : "none";
+        if (!cur) return;
+        $("task").textContent =
+          cur.task + " · started " + new Date(cur.start).toLocaleTimeString();
+        $("wait").className = cur.waitStart ? "on" : "";
+        $("int").textContent = "Interrupted (" + cur.ints + ")";
+        $("rej").className = cur.rej ? "on" : "";
+      }
+      $("wait").onclick = () => {
+        const n = Date.now();
+        if (cur.waitStart) {
+          cur.wait += n - cur.waitStart;
+          cur.waitStart = null;
+        } else cur.waitStart = n;
+        save();
+        show();
+      };
+      $("int").onclick = () => {
+        cur.ints++;
+        save();
+        show();
+      };
+      $("rej").onclick = () => {
+        cur.rej = !cur.rej;
+        save();
+        show();
+      };
+      $("cancel").onclick = () => {
+        if (confirm("Discard this entry?")) {
+          cur = null;
+          save();
+          show();
+        }
+      };
+      $("stop").onclick = () => {
+        const n = Date.now();
+        const w = waited(cur, n);
+        log.push({
+          task: cur.task,
+          start: cur.start,
+          end: n,
+          total: n - cur.start,
+          wait: w,
+          active: n - cur.start - w,
+          ints: cur.ints,
+          rej: cur.rej,
+        });
+        cur = null;
+        save();
+        show();
+        stats();
+      };
+      function stats() {
+        const today = new Date().toDateString();
+        const rows = log.filter(
+          (e) => new Date(e.start).toDateString() === today
+        );
+        let h =
+          "<tr><th>Task</th><th>Count</th><th>Avg active</th><th>Avg wait</th></tr>";
+        TASKS.forEach((t) => {
+          const r = rows.filter((e) => e.task === t);
+          if (!r.length) return;
+          const a = r.reduce((s, e) => s + e.active, 0) / r.length,
+            w = r.reduce((s, e) => s + e.wait, 0) / r.length;
+          h += `<tr><td>${t}</td><td>${r.length}</td><td>${mins(
+            a
+          )} min</td><td>${mins(w)} min</td></tr>`;
+        });
+        const ints = rows.reduce((s, e) => s + e.ints, 0),
+          rej = rows.filter((e) => e.rej).length;
+        h += `<tr><td colspan="4">Interruptions: ${ints} · Rejections: ${rej}</td></tr>`;
+        $("stats").innerHTML = h;
+      }
+      $("exp").onclick = () => {
+        if (!log.length) {
+          alert("No entries yet.");
+          return;
+        }
+        const head =
+          "task,date,start,end,total_min,active_min,wait_min,interruptions,rejected\n";
+        const body = log
+          .map((e) => {
+            const s = new Date(e.start),
+              en = new Date(e.end);
+            return [
+              e.task,
+              s.toLocaleDateString(),
+              s.toLocaleTimeString(),
+              en.toLocaleTimeString(),
+              mins(e.total),
+              mins(e.active),
+              mins(e.wait),
+              e.ints,
+              e.rej ? "Y" : "N",
+            ]
+              .map((v) => `"${v}"`)
+              .join(",");
+          })
+          .join("\n");
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(
+          new Blob([head + body], { type: "text/csv" })
+        );
+        a.download =
+          "time-study-" + new Date().toISOString().slice(0, 10) + ".csv";
+        a.click();
+      };
+      $("clr").onclick = () => {
+        if (confirm("Delete all saved entries? Export first.")) {
+          log = [];
+          save();
+          stats();
+        }
+      };
+      setInterval(() => {
+        if (!cur) return;
+        $("timer").textContent = fmt(Date.now() - cur.start);
+        $("sub").textContent =
+          "Waiting so far: " + fmt(waited(cur, Date.now()));
+      }, 1000);
+      show();
+      stats();
+    </script>
+  </body>
+</html>
