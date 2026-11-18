@@ -25,7 +25,7 @@
       }
       button {
         font-size: 16px;
-        padding: 16px;
+        padding: 14px;
         border: 0;
         border-radius: 12px;
         background: #334155;
@@ -35,17 +35,20 @@
         background: #f59e0b;
         color: #111;
       }
-      #run {
-        display: none;
+      .card {
         background: #1e293b;
         border-radius: 12px;
         padding: 14px;
         margin: 12px 0;
       }
-      #timer {
-        font-size: 40px;
+      .t {
+        font-size: 32px;
         font-weight: 700;
-        margin: 6px 0;
+        margin: 4px 0;
+      }
+      .small {
+        font-size: 13px;
+        opacity: 0.8;
       }
       .stop {
         background: #dc2626;
@@ -75,20 +78,10 @@
     </style>
   </head>
   <body>
-    <h1>Daily Log</h1>
+    <h1>Start a task</h1>
     <div id="pick" class="grid"></div>
-    <div id="run">
-      <div id="task"></div>
-      <div id="timer">0:00</div>
-      <div id="sub"></div>
-      <div class="grid" style="margin-top: 10px">
-        <button id="wait">Waiting</button>
-        <button id="int">Interrupted (0)</button>
-        <button id="rej">Rejected / redone</button>
-        <button id="cancel">Discard</button>
-      </div>
-      <button class="stop" id="stop">Stop and save</button>
-    </div>
+    <h1 style="margin-top: 20px">Running (<span id="n">0</span>)</h1>
+    <div id="running"></div>
     <h1 style="margin-top: 20px">Today</h1>
     <table id="stats"></table>
     <div class="row">
@@ -105,21 +98,26 @@
         "Form timing",
       ];
       const KEY = "tslog";
-      let log = JSON.parse(localStorage.getItem(KEY) || "[]");
-      let cur = JSON.parse(localStorage.getItem(KEY + "_cur") || "null");
       const $ = (id) => document.getElementById(id);
+      let log = JSON.parse(localStorage.getItem(KEY) || "[]");
+      let run = JSON.parse(localStorage.getItem(KEY + "_run") || "[]");
+      const old = JSON.parse(localStorage.getItem(KEY + "_cur") || "null");
+      if (old) {
+        old.id = "m" + Date.now();
+        run.push(old);
+        localStorage.removeItem(KEY + "_cur");
+      }
       const save = () => {
         localStorage.setItem(KEY, JSON.stringify(log));
-        localStorage.setItem(KEY + "_cur", JSON.stringify(cur));
+        localStorage.setItem(KEY + "_run", JSON.stringify(run));
       };
       const mins = (ms) => (ms / 60000).toFixed(1);
       const fmt = (ms) => {
         const s = Math.floor(ms / 1000);
         return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
       };
-      function waited(c, now) {
-        return c.wait + (c.waitStart ? now - c.waitStart : 0);
-      }
+      const waited = (c, now) => c.wait + (c.waitStart ? now - c.waitStart : 0);
+      const find = (id) => run.find((c) => c.id === id);
       TASKS.forEach((t) => {
         const b = document.createElement("button");
         b.textContent = t;
@@ -127,71 +125,87 @@
         $("pick").appendChild(b);
       });
       function start(t) {
-        cur = {
+        run.push({
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
           task: t,
           start: Date.now(),
           wait: 0,
           waitStart: null,
           ints: 0,
           rej: false,
-        };
-        save();
-        show();
-      }
-      function show() {
-        $("pick").style.display = cur ? "none" : "grid";
-        $("run").style.display = cur ? "block" : "none";
-        if (!cur) return;
-        $("task").textContent =
-          cur.task + " · started " + new Date(cur.start).toLocaleTimeString();
-        $("wait").className = cur.waitStart ? "on" : "";
-        $("int").textContent = "Interrupted (" + cur.ints + ")";
-        $("rej").className = cur.rej ? "on" : "";
-      }
-      $("wait").onclick = () => {
-        const n = Date.now();
-        if (cur.waitStart) {
-          cur.wait += n - cur.waitStart;
-          cur.waitStart = null;
-        } else cur.waitStart = n;
-        save();
-        show();
-      };
-      $("int").onclick = () => {
-        cur.ints++;
-        save();
-        show();
-      };
-      $("rej").onclick = () => {
-        cur.rej = !cur.rej;
-        save();
-        show();
-      };
-      $("cancel").onclick = () => {
-        if (confirm("Discard this entry?")) {
-          cur = null;
-          save();
-          show();
-        }
-      };
-      $("stop").onclick = () => {
-        const n = Date.now();
-        const w = waited(cur, n);
-        log.push({
-          task: cur.task,
-          start: cur.start,
-          end: n,
-          total: n - cur.start,
-          wait: w,
-          active: n - cur.start - w,
-          ints: cur.ints,
-          rej: cur.rej,
         });
-        cur = null;
         save();
-        show();
+        render();
+      }
+      function render() {
+        $("n").textContent = run.length;
+        $("running").innerHTML = run
+          .map(
+            (c) => `<div class="card" data-id="${c.id}">
+  <div>${c.task} <span class="small">· started ${new Date(
+              c.start
+            ).toLocaleTimeString()}</span></div>
+  <div class="t" data-el="time">0:00</div>
+  <div class="small" data-el="wait"></div>
+  <div class="grid" style="margin-top:10px">
+   <button data-act="wait" class="${c.waitStart ? "on" : ""}">Waiting</button>
+   <button data-act="int">Interrupted (${c.ints})</button>
+   <button data-act="rej" class="${
+     c.rej ? "on" : ""
+   }">Rejected / redone</button>
+   <button data-act="cancel">Discard</button>
+  </div>
+  <button class="stop" data-act="stop">Stop and save</button></div>`
+          )
+          .join("");
+        tick();
+      }
+      $("running").onclick = (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        const c = find(b.closest(".card").dataset.id);
+        if (!c) return;
+        const n = Date.now(),
+          a = b.dataset.act;
+        if (a === "wait") {
+          if (c.waitStart) {
+            c.wait += n - c.waitStart;
+            c.waitStart = null;
+          } else c.waitStart = n;
+        } else if (a === "int") c.ints++;
+        else if (a === "rej") c.rej = !c.rej;
+        else if (a === "cancel") {
+          if (!confirm("Discard this " + c.task + " entry?")) return;
+          run = run.filter((x) => x !== c);
+        } else if (a === "stop") {
+          const w = waited(c, n);
+          if (c.waitStart) c.waitStart = null;
+          log.push({
+            task: c.task,
+            start: c.start,
+            end: n,
+            total: n - c.start,
+            wait: w,
+            active: n - c.start - w,
+            ints: c.ints,
+            rej: c.rej,
+          });
+          run = run.filter((x) => x !== c);
+        }
+        save();
+        render();
         stats();
       };
+      function tick() {
+        const n = Date.now();
+        document.querySelectorAll("#running .card").forEach((el) => {
+          const c = find(el.dataset.id);
+          if (!c) return;
+          el.querySelector('[data-el="time"]').textContent = fmt(n - c.start);
+          el.querySelector('[data-el="wait"]').textContent =
+            "Waiting so far: " + fmt(waited(c, n));
+        });
+      }
       function stats() {
         const today = new Date().toDateString();
         const rows = log.filter(
@@ -254,13 +268,8 @@
           stats();
         }
       };
-      setInterval(() => {
-        if (!cur) return;
-        $("timer").textContent = fmt(Date.now() - cur.start);
-        $("sub").textContent =
-          "Waiting so far: " + fmt(waited(cur, Date.now()));
-      }, 1000);
-      show();
+      setInterval(tick, 1000);
+      render();
       stats();
     </script>
   </body>
