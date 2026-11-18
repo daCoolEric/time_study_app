@@ -229,9 +229,13 @@
         h += `<tr><td colspan="4">Interruptions: ${ints} · Rejections: ${rej}</td></tr>`;
         $("stats").innerHTML = h;
       }
-      $("exp").onclick = () => {
+      $("exp").onclick = async () => {
         if (!log.length) {
-          alert("No entries yet.");
+          alert(
+            run.length
+              ? "Nothing saved yet. Tap Stop and save on your running tasks first. Only saved entries are exported."
+              : "No entries yet."
+          );
           return;
         }
         const head =
@@ -255,14 +259,71 @@
               .join(",");
           })
           .join("\n");
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(
-          new Blob([head + body], { type: "text/csv" })
-        );
-        a.download =
-          "time-study-" + new Date().toISOString().slice(0, 10) + ".csv";
-        a.click();
+        const csv = head + body,
+          name = "time-study-" + new Date().toISOString().slice(0, 10) + ".csv";
+        // 1) Share sheet (works on phones and in home-screen mode)
+        try {
+          const f = new File([csv], name, { type: "text/csv" });
+          if (navigator.canShare && navigator.canShare({ files: [f] })) {
+            await navigator.share({ files: [f], title: name });
+            return;
+          }
+        } catch (e) {
+          if (e && e.name === "AbortError") return;
+        }
+        // 2) Normal download
+        try {
+          const url = URL.createObjectURL(
+            new Blob([csv], { type: "text/csv" })
+          );
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = name;
+          a.style.display = "none";
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            a.remove();
+            URL.revokeObjectURL(url);
+          }, 4000);
+        } catch (e) {}
+        // 3) Copy fallback
+        showCopy(csv);
       };
+      function showCopy(csv) {
+        let box = $("csvbox");
+        if (!box) {
+          box = document.createElement("div");
+          box.id = "csvbox";
+          box.className = "card";
+          document.body.appendChild(box);
+        }
+        box.innerHTML = "";
+        const p = document.createElement("div");
+        p.className = "small";
+        p.textContent =
+          "If no file downloaded, tap Copy data and paste it into WhatsApp or a note.";
+        const ta = document.createElement("textarea");
+        ta.value = csv;
+        ta.readOnly = true;
+        ta.style.cssText =
+          "width:100%;height:120px;margin-top:8px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px";
+        const b = document.createElement("button");
+        b.textContent = "Copy data";
+        b.style.cssText = "width:100%;margin-top:8px";
+        b.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(csv);
+          } catch (e) {
+            ta.focus();
+            ta.select();
+            document.execCommand("copy");
+          }
+          b.textContent = "Copied";
+        };
+        box.append(p, ta, b);
+        box.scrollIntoView({ behavior: "smooth" });
+      }
       $("clr").onclick = () => {
         if (confirm("Delete all saved entries? Export first.")) {
           log = [];
